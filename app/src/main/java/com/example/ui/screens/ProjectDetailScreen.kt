@@ -1346,7 +1346,7 @@ private fun ProjectImportTab(
             ) {
                 Column(
                     modifier = Modifier.padding(20.dp),
-                    horizontalAlignment = Alignment.CenterVertically,
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Box(
