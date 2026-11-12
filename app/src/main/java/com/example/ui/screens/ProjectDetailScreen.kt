@@ -156,7 +156,7 @@ fun ProjectDetailScreen(
                     project = project,
                     records = projectRecords,
                     variables = variables,
-                    forms = forms,
+                    formsList = forms,
                     onOpenRecord = onOpenRecord,
                     onNewRecord = onNewRecord,
                     onSwitchTab = { selectedTab = it }
