@@ -1,0 +1,244 @@
+import { useEffect, type CSSProperties, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useSignOut } from './Confirm';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { Brand } from './Brand';
+import { Dropdown, Icon } from './ui';
+import * as store from '../lib/db';
+import { native } from '../lib/native';
+import { ago, shortDate } from '../lib/time';
+import { initials } from '../lib/format';
+import { useSession } from '../providers/AppProvider';
+import { useUi, type ProjectTab, type Route } from '../providers/UiProvider';
+import { checkAccess } from '../lib/access';
+
+export const useProjects = () => useQuery({ queryKey: ['projects'], queryFn: store.listProjects });
+
+const TAB_LABEL: Record<ProjectTab, string> = { overview: 'Overview', variables: 'Variables', forms: 'Forms', sharing: 'Sharing', statistics: 'Statistics', workbench: 'Workbench', dashboard: 'Dashboard', reports: 'Reports', data: 'Data view', import: 'Import', export: 'Export', files: 'Files' };
+const PAGE_LABEL: Record<string, string> = { home: 'My projects', sync: 'Sync centre', settings: 'Settings', help: 'Help & documentation' };
+
+function NavItem({ icon, label, active, onClick, end, title, c }: { icon: string; label: string; active?: boolean; onClick: () => void; end?: ReactNode; title?: string; c?: string }) {
+  return (
+    <button type="button" className={`nav-item ${active ? 'active' : ''}`} onClick={onClick} title={title ?? label} aria-current={active ? 'page' : undefined} style={c ? ({ '--nc': `var(--vv-${c})` } as CSSProperties) : undefined}>
+      <Icon name={icon} /><span className="txt">{label}</span>{end && <span className="nav-end">{end}</span>}
+    </button>
+  );
+}
+
+function Sidebar() {
+  const { route, go, collapsed, currentProject } = useUi();
+  const { user, server } = useSession();
+  const projects = useProjects();
+  const pending = useQuery({ queryKey: ['pending'], queryFn: store.outboxCount });
+  const pid = route.page === 'project' ? route.project : currentProject;
+  const project = projects.data?.find((p) => p.uuid === pid) ?? null;
+  const stats = useQuery({ queryKey: ['pstats', project?.uuid], queryFn: () => store.projectStats(project!.uuid), enabled: !!project });
+  const forms = useQuery({ queryKey: ['forms', project?.uuid], queryFn: () => store.listForms(project!.uuid), enabled: !!project });
+  const tab = route.page === 'project' ? route.tab : null;
+  const toProject = (t: ProjectTab) => project && go({ page: 'project', project: project.uuid, tab: t });
+  const lock = (t: ProjectTab) => (project && !checkAccess(t, project).ok ? <Icon name="lock-fill" className="lock-ic" /> : undefined);
+
+  const doSignOut = useSignOut();
+
+  return (
+    <aside className={`sb ${collapsed ? 'collapsed' : ''}`} aria-label="Main navigation">
+      <div className="sb-brand" onClick={() => go({ page: 'home' })} title="My projects"><Brand /></div>
+      <div className="sb-scroll">
+        <NavItem icon="grid-1x2" label="My projects" c="1" active={route.page === 'home'} onClick={() => go({ page: 'home' })} />
+        <NavItem icon="arrow-repeat" label="Sync centre" c="3" active={route.page === 'sync'} onClick={() => go({ page: 'sync' })}
+          end={pending.data ? <span className="count" title={`${pending.data} waiting to send`}>{pending.data}</span> : undefined} />
+
+        {project && (
+          <>
+            <div className="sb-project anim-in">
+              <Dropdown align="left" width="100%" button={(_o, toggle) => (
+                <div className="pc-head" onClick={toggle} title="Switch project">
+                  <span className="pc-ic"><Icon name="clipboard2-pulse" /></span>
+                  <div className="min-w-0 flex-1"><div className="pc-title">{project.title}</div><div className="pc-kind">Research project</div></div>
+                  <Icon name="chevron-down" className="mt-1 text-sm" />
+                </div>
+              )}>
+                {(close) => (
+                  <>
+                    <div className="mh">Switch project</div>
+                    {projects.data?.map((p) => (
+                      <button key={p.uuid} onClick={() => { close(); go({ page: 'project', project: p.uuid, tab: tab ?? 'overview' }); }}>
+                        <Icon name={p.uuid === project.uuid ? 'check2' : 'folder2'} /><span className="truncate">{p.title}</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+              </Dropdown>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <span className="chip chip-brand"><Icon name="person-badge" />{project.role.charAt(0).toUpperCase() + project.role.slice(1)}</span>
+                {project.status !== 'active' && <span className="chip chip-warn"><Icon name="archive" />Archived</span>}
+              </div>
+              <div className="pc-stats">
+                <button className="pc-stat" onClick={() => toProject('data')} title="Records on this computer">
+                  <Icon name="database-fill" /><b>{stats.data?.total ?? '–'}</b><small>Records</small>{!!stats.data?.today && <em>+{stats.data.today}</em>}
+                </button>
+                <button className="pc-stat" onClick={() => go({ page: 'sync' })} title="Changes waiting to be sent">
+                  <Icon name="send-fill" /><b>{stats.data?.toSend ?? 0}</b><small>To send</small>{!!stats.data?.refused && <em className="warn">!{stats.data.refused}</em>}
+                </button>
+                <button className="pc-stat" onClick={() => toProject('forms')} title="Data-entry forms">
+                  <Icon name="ui-checks-grid" /><b>{forms.data?.length ?? 0}</b><small>Forms</small>
+                </button>
+              </div>
+            </div>
+            <div className="nav-label">Project</div>
+            <NavItem icon="speedometer2" label="Overview" c="2" active={tab === 'overview'} onClick={() => toProject('overview')} />
+            <NavItem icon="diagram-3" label="Variables" c="9" active={tab === 'variables'} onClick={() => toProject('variables')} />
+            <NavItem icon="ui-checks-grid" label="Forms" c="8" active={tab === 'forms'} onClick={() => toProject('forms')} />
+            <NavItem icon="share" label="Sharing" c="5" active={tab === 'sharing'} onClick={() => toProject('sharing')} end={lock('sharing')} />
+            <div className="nav-label">Analysis</div>
+            <NavItem icon="calculator" label="Statistics" c="1" active={tab === 'statistics'} onClick={() => toProject('statistics')} end={lock('statistics')} />
+            <NavItem icon="bezier2" label="Workbench" c="9" active={tab === 'workbench'} onClick={() => toProject('workbench')} end={lock('workbench')} />
+            <NavItem icon="pie-chart" label="Dashboard" c="6" active={tab === 'dashboard'} onClick={() => toProject('dashboard')} end={lock('dashboard')} />
+            <NavItem icon="file-earmark-bar-graph" label="Reports" c="7" active={tab === 'reports'} onClick={() => toProject('reports')} end={lock('reports')} />
+            <div className="nav-label">Data management</div>
+            <NavItem icon="table" label="Data view" c="2" active={tab === 'data'} onClick={() => toProject('data')} end={stats.data?.total ? <span className="count soft">{stats.data.total}</span> : undefined} />
+            <NavItem icon="cloud-upload" label="Import" c="4" active={tab === 'import'} onClick={() => toProject('import')} end={lock('import')} />
+            <NavItem icon="box-arrow-down" label="Export" c="10" active={tab === 'export'} onClick={() => toProject('export')} end={lock('export')} />
+            <NavItem icon="paperclip" label="Files" c="5" active={tab === 'files'} onClick={() => toProject('files')} />
+          </>
+        )}
+        <div className="h-3" />
+        <NavItem icon="gear" label="Settings" c="9" active={route.page === 'settings'} onClick={() => go({ page: 'settings' })} />
+        <NavItem icon="book" label="Help & documentation" c="3" active={route.page === 'help'} onClick={() => go({ page: 'help' })} />
+      </div>
+      <Dropdown style={{ left: '.8rem', right: '.8rem', bottom: 'calc(100% + .4rem)' }} button={(open, toggle) => (
+        <button type="button" className="sb-user" onClick={toggle} aria-expanded={open}>
+          <span className="avatar">{initials(user?.name || user?.email)}</span>
+          <span className="u-txt min-w-0 flex-1"><b className="block truncate" style={{ color: 'var(--rh-brand)' }}>{user?.name || user?.email}</b><span className="muted block truncate text-xs">{user?.email}</span></span>
+          <Icon name={open ? 'chevron-down' : 'chevron-up'} className="muted" />
+        </button>
+      )}>
+        {(close) => (
+          <>
+            <div className="mh">Signed in to {new URL(server).host}</div>
+            <button onClick={() => { close(); native.revealLocal(); }}><Icon name="folder2-open" />Open workspace folder</button>
+            <button onClick={() => { close(); openUrl(server); }}><Icon name="box-arrow-up-right" />Open the website</button>
+            <button onClick={() => { close(); go({ page: 'settings' }); }}><Icon name="gear" />Settings</button>
+            <hr />
+            <button className="danger" onClick={() => { close(); doSignOut(); }}><Icon name="box-arrow-right" />Sign out</button>
+          </>
+        )}
+      </Dropdown>
+    </aside>
+  );
+}
+
+function Topbar() {
+  const { route, go, toggleSidebar, dark, setTheme, setPalette } = useUi();
+  const { online, syncing, sync, server, live, revoked } = useSession();
+  const projects = useProjects();
+  const project = route.page === 'project' ? projects.data?.find((p) => p.uuid === route.project) : null;
+  const isLive = online && live === 'live' && !revoked;
+  return (
+    <header className="tb">
+      <button className="btn btn-icon btn-sm" onClick={toggleSidebar} title="Show or hide the menu (Ctrl+B)" aria-label="Toggle menu"><Icon name="layout-sidebar" /></button>
+      <nav className="crumbs" aria-label="Breadcrumb">
+        <button onClick={() => go({ page: 'home' })}>Projects</button>
+        {route.page === 'project' ? (
+          <>
+            <span className="sep">|</span>
+            <button onClick={() => go({ page: 'project', project: route.project, tab: 'overview' })} title={project?.title}>{project?.title ?? 'Project'}</button>
+            {route.tab !== 'overview' && <><span className="sep">|</span><span className="here">{TAB_LABEL[route.tab]}</span></>}
+          </>
+        ) : (
+          <><span className="sep">|</span><span className="here">{PAGE_LABEL[route.page]}</span></>
+        )}
+      </nav>
+      <button className="btn btn-sm btn-soft" onClick={() => setPalette(true)} title="Search projects, records and pages (Ctrl+K)"><Icon name="search" /><span>Search</span><kbd>Ctrl K</kbd></button>
+      <span className={`netpill ${online && !revoked ? 'on' : 'off'} ${isLive ? 'live' : ''}`} onClick={() => go({ page: 'sync' })} style={{ cursor: 'pointer' }}
+        title={revoked ? 'This computer was disconnected on the website' : isLive ? `Live: changes on ${new URL(server).host} arrive within seconds` : online ? `Connected to ${server}` : `Cannot reach ${server}. Changes are saved on this computer.`}>
+        <span className="dot" />{revoked ? 'Disconnected' : isLive ? 'Live' : online ? 'Online' : 'Offline'}
+      </span>
+      <button className="btn btn-primary" onClick={() => sync()} disabled={!online || syncing} title={online ? 'Send and receive changes (F5)' : 'Connect to the internet to sync'}>
+        <Icon name="arrow-repeat" className={syncing ? 'spin' : ''} />{syncing ? 'Syncing…' : 'Sync now'}
+      </button>
+      <button className="btn btn-icon" onClick={() => setTheme(dark ? 'light' : 'dark')} title={dark ? 'Light theme' : 'Dark theme'} aria-label="Toggle theme"><Icon name={dark ? 'sun' : 'moon-stars'} /></button>
+    </header>
+  );
+}
+
+function StatusBar() {
+  const { lastSync, lastResult, settings, live, lastCheck } = useSession();
+  const pending = useQuery({ queryKey: ['pending'], queryFn: store.outboxCount });
+  const fstats = useQuery({ queryKey: ['fstats'], queryFn: store.fileStats });
+  const log = useQuery({ queryKey: ['synclog'], queryFn: () => store.syncLog(20) });
+  return (
+    <footer className="statusbar">
+      <span><Icon name="clock-history" />Last sync <b>{ago(lastSync)}</b>{lastResult && !lastResult.ok && <span style={{ color: 'var(--rh-danger)' }}> · {lastResult.error ?? 'some changes refused'}</span>}</span>
+      <span><Icon name="send" />Waiting to send <b style={pending.data ? { color: 'var(--rh-warning)' } : undefined}>{pending.data ?? 0}</b></span>
+      <span><Icon name="paperclip" />Files offline <b>{fstats.data?.offline ?? 0}/{fstats.data?.total ?? 0}</b>{fstats.data?.waiting ? ` · ${fstats.data.waiting} to upload` : ''}</span>
+      <span><Icon name="stopwatch" />Auto-sync <b>{settings.autoSyncMin ? `every ${settings.autoSyncMin} min` : 'off'}</b></span>
+      <span title={lastCheck ? `Website last checked ${ago(lastCheck)}` : undefined}><Icon name="broadcast" />Live sync <b>{!settings.liveSync ? 'off' : live === 'live' ? `on · ${settings.liveEverySec}s` : live === 'unsupported' ? 'needs server update' : 'paused'}</b></span>
+      <span className="flex-1" />
+      {log.data?.[0] && <span className="truncate" title={log.data.map((l) => `${shortDate(l.at)} — ${l.summary}`).join('\n')}>{log.data[0].summary}</span>}
+    </footer>
+  );
+}
+
+/** Keyboard shortcuts for the whole app. */
+function useShortcuts() {
+  const { route, go, back, toggleSidebar, setPalette, openEditor, editor, palette } = useUi();
+  const { sync, online } = useSession();
+  const projects = useProjects();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const typing = (e.target as HTMLElement)?.closest('input, textarea, select, [contenteditable]');
+      const ctrl = e.ctrlKey || e.metaKey;
+      const k = e.key.toLowerCase();
+      if (e.key === 'F5' || (ctrl && k === 'r')) { e.preventDefault(); if (online) sync(); return; } // never reload the window
+      if (ctrl && k === 'k') { e.preventDefault(); setPalette(!palette); return; }
+      if (editor || palette) return;
+      if (ctrl && k === 'b') { e.preventDefault(); toggleSidebar(); return; }
+      if (ctrl && e.key === ',') { e.preventDefault(); go({ page: 'settings' }); return; }
+      if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); back(); return; }
+      if (ctrl && k === 'n' && route.page === 'project') {
+        e.preventDefault();
+        const p = projects.data?.find((x) => x.uuid === route.project);
+        if (p?.can.add && p.status === 'active') openEditor({ project: p.uuid, record: null, form: null });
+        return;
+      }
+      if (!typing && (e.key === '/' || (ctrl && k === 'f'))) {
+        const s = document.getElementById('search') as HTMLInputElement | null;
+        if (s) { e.preventDefault(); s.focus(); s.select(); }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [route, go, back, toggleSidebar, setPalette, openEditor, editor, palette, sync, online, projects.data]);
+}
+
+/** Shown when the website disconnected this computer (Account → Devices). */
+function RevokedBar() {
+  const { revoked, retryConnection, server, syncing } = useSession();
+  if (!revoked) return null;
+  return (
+    <div className="revoked-bar anim-in" role="alert">
+      <Icon name="plug" />
+      <span className="min-w-0 flex-1">{revoked} Your data stays on this computer.</span>
+      <button className="btn btn-sm" onClick={() => openUrl(`${server}/account#devices`)}><Icon name="box-arrow-up-right" />Open Devices</button>
+      <button className="btn btn-sm" disabled={syncing} onClick={() => retryConnection()}><Icon name="arrow-clockwise" />Try again</button>
+    </div>
+  );
+}
+
+export function Shell({ children }: { children: ReactNode }) {
+  useShortcuts();
+  return (
+    <div className="shell">
+      <Sidebar />
+      <div className="main">
+        <Topbar />
+        <RevokedBar />
+        {children}
+        <StatusBar />
+      </div>
+    </div>
+  );
+}
+
+export type { Route };

@@ -1,0 +1,6 @@
+{
+  "name": "Library Medicine",
+  "description": "Offline-first clinical research data collection app syncing with librarymedicine.online",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
